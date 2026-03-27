@@ -27,6 +27,10 @@ Use this skill only for the current in-flight rollout continuation.
 - one intermittent scheduler-to-model-api `504 Gateway Timeout` can be persisted as `rescan_error` while the original fast-stage decision is still stored; historical rows can stay if the error is not still recurring
 - queue saturation is now directly evidenced in `/metrics`: `model_api_queue_timeouts_total{task_type="scan_reasoning"}`, `pending_reasoning`, `oldest_job_age_seconds`, and `deadletter` can rise even when the ALB target is healthy
 - the important topology correction is that AWS model-api tasks still use a shared `REDIS_URL` queue; the dominant AWS/pgpu difference is not “local per-instance queue”, but the front door and caller topology: pgpu uses NGINX `least_conn` with `300s` proxy timeouts plus a direct two-endpoint pool, while AWS callers currently collapse to a single internal ALB URL
+- `origin/main` now also includes `7c4a601`, which reduces scheduler ledger polling overhead and changes the scheduler render default to `COMPLIANCE_ANALYSIS_JOB_CLAIM_LIMIT=128`
+- rendered scheduler task definitions can still lag that source default; if `deployment/rendered/ecs-task-definition-scheduler.prod.json` still says `32`, rerender or explicitly pass `COMPLIANCE_ANALYSIS_JOB_CLAIM_LIMIT=128` before deploy
+- direct-vs-ledger synthetic comparison on `pgpu` showed the current Aurora-backed analysis ledger adds roughly `+1.9s` to `+2.6s` fixed overhead per `256` items, so current AWS slowdown should be treated as scheduler ledger/poll overhead before blaming raw `/v1/scan` latency
+- the current distributed run lock does not do a short retry loop; an instance that loses the lock normally retries only on its next `30` minute schedule tick unless the process restarts or a manual run is triggered
 - app healthcheck failures were traced to ECS/Docker liveness hitting `/health`; app now has a `/readyz` split in commit `ed39608`, but rendered task definitions must be regenerated before deploy because `deployment/rendered/ecs-task-definition-app.prod.json` can lag the template
 - app dashboard is served by the same FastAPI process on port `8000`; current public exposure work uses `agent-parser-public-alb` plus `agent-parser-public-tg`
 - Redis `hash value is not an integer` warnings now most likely come from stale `ta:*:summary` or `ta:overall:summary` preagg keys because startup only rebuilds stats-only preagg, not TA preagg
@@ -40,6 +44,8 @@ Use this skill only for the current in-flight rollout continuation.
 - one private-compute subnet can be healthy while the other still times out to `huggingface.co`; do not assume both AZ paths are equivalent just because one task is green
 - `scheduler` has already been redeployed with richer model-api timeout diagnostics; do not redeploy it again just to refresh model-api image changes unless scheduler-specific code changed
 - `model-api` image-only redeploys should leave scheduler/app untouched and preferably clone the known-good live task definition when you need zero-drift recovery
+- if local `docker exec ... curl http://127.0.0.1:8001/v1/scan` timing on the model-api host is close to `pgpu`, treat scheduler ledger/poll/post-processing as the first bottleneck instead of model-api serving
+- scheduler throughput changes tied to `COMPLIANCE_ANALYSIS_JOB_CLAIM_LIMIT` require rerender + redeploy; changing the render script default alone does not update an already rendered task definition
 - `app` DB issues after secret edits are separate from model-api serving issues
 - public app access now depends more on listener/TG correctness than on certificate attachment alone; if `HTTP:80` works but `HTTPS:443` returns `503`, first confirm the `443` listener points to the same healthy TG ARN as the app tasks
 - ALB target groups with the same visible name can still be different resources; always verify the exact ARN before assuming `80` and `443` share the same backend
