@@ -9,6 +9,9 @@ Use this skill only for the current in-flight rollout continuation.
 
 ## Snapshot
 
+- `origin/main` now also includes `b771369`:
+  - vLLM 16k context overflow auto-adjust now works against the current sidecar path `http://127.0.0.1:8000/v1`
+  - manual `/v1/reanalyze` now auto-tags `HITL` when input had to be truncated to fit model context
 - `origin/main` includes:
   - `eeb6f28` unified scan refactor
   - `f0e1667` model-api vLLM sidecar layout
@@ -34,6 +37,12 @@ Use this skill only for the current in-flight rollout continuation.
 - app healthcheck failures were traced to ECS/Docker liveness hitting `/health`; app now has a `/readyz` split in commit `ed39608`, but rendered task definitions must be regenerated before deploy because `deployment/rendered/ecs-task-definition-app.prod.json` can lag the template
 - app dashboard is served by the same FastAPI process on port `8000`; current public exposure work uses `agent-parser-public-alb` plus `agent-parser-public-tg`
 - Redis `hash value is not an integer` warnings now most likely come from stale `ta:*:summary` or `ta:overall:summary` preagg keys because startup only rebuilds stats-only preagg, not TA preagg
+- one real production failure bucket was internal model-api ALB SG drift: listener `8001` and TG could both be healthy while app still failed with `Inference API unreachable (all endpoints): All connection attempts failed` because the ALB SG did not allow the actual app task SG
+- another real production failure bucket was vLLM context overflow surfacing as `/v1/scan` `500`:
+  - old clipping logic only ran when the base URL literally contained `vllm`
+  - old overflow parsing only matched legacy vLLM wording, not `You passed ... maximum input length ...`
+- at least one ECS service currently showed `minimumHealthyPercent=0`, `maximumPercent=100`; with that configuration `--force-new-deployment` is allowed to stop old tasks before the replacement is healthy
+- dashboard admin bootstrap uses the `prod/admin-password` secret only when the `admin` row does not already exist; rotating the secret alone does not reset an already-seeded admin password hash
 - GitLab Runner deployment scaffolding is drafted in the pgpu worktree via `.gitlab-ci.yml` and `deployment/GITLAB_RUNNER_DEPLOYMENT.md`: `main` is intended to run `validate` plus dev image builds automatically, while dev deploy / prod promote / prod deploy stay manual
 - do not assume CI can infer the final deploy target from changed files alone; service builds can be narrowed automatically, but the actual deploy decision should stay explicit because shared modules, contracts, and env-only changes can affect multiple services
 - one EC2 can host multiple GitLab runners, but that is still logical separation only; prod safety should come from tags, protected refs, and distinct job routing rather than assuming host-level isolation
@@ -47,6 +56,10 @@ Use this skill only for the current in-flight rollout continuation.
 - if local `docker exec ... curl http://127.0.0.1:8001/v1/scan` timing on the model-api host is close to `pgpu`, treat scheduler ledger/poll/post-processing as the first bottleneck instead of model-api serving
 - scheduler throughput changes tied to `COMPLIANCE_ANALYSIS_JOB_CLAIM_LIMIT` require rerender + redeploy; changing the render script default alone does not update an already rendered task definition
 - `app` DB issues after secret edits are separate from model-api serving issues
+- current model-api incidents split into three buckets:
+  - caller-to-ALB connectivity / security groups
+  - model-api / vLLM runtime or queue behavior
+  - vLLM context overflow clipping / retry behavior
 - public app access now depends more on listener/TG correctness than on certificate attachment alone; if `HTTP:80` works but `HTTPS:443` returns `503`, first confirm the `443` listener points to the same healthy TG ARN as the app tasks
 - ALB target groups with the same visible name can still be different resources; always verify the exact ARN before assuming `80` and `443` share the same backend
 - the desired public ALB pattern is `HTTP:80` redirecting to `HTTPS:443`, with `HTTPS:443` forwarding to the single healthy app TG
@@ -58,10 +71,13 @@ Use this skill only for the current in-flight rollout continuation.
 1. confirm you are working from `/home/kevin/projects/agent_parser` on `pgpu`
 2. confirm live `PRIMARY` task definition per service
 3. confirm ECS container instances are registered after any ASG/LT recycle
-4. confirm model-api TG target health and scheduler `MODEL_API_URL(S)` envs
-5. if app template or healthcheck changed, rerender `deployment/rendered/ecs-task-definition-app.prod.json` and verify it contains `/readyz` before deploy
-6. if one model-api task is healthy, use that container to derive the real EFS HF cache path before changing `--model`
-7. only then decide whether caller redeploy is still needed
+4. confirm model-api TG target health, listener `8001`, and scheduler/app `MODEL_API_URL(S)` envs
+5. confirm internal model-api ALB SG allows the live app/scheduler task SGs
+6. if app template or healthcheck changed, rerender `deployment/rendered/ecs-task-definition-app.prod.json` and verify it contains `/readyz` before deploy
+7. if one model-api task is healthy, use that container to derive the real EFS HF cache path before changing `--model`
+8. if `/v1/scan` 500s on long prompts, classify whether the task is on pre-`b771369` code before treating it as generic instability
+9. check ECS service deployment configuration before assuming `force-new-deployment` preserves one healthy task
+10. only then decide whether caller redeploy is still needed
 
 ## Do Not Re-load
 
