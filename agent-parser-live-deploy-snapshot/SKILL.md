@@ -9,6 +9,9 @@ Use this skill only for the current in-flight rollout continuation.
 
 ## Snapshot
 
+- `origin/main` now also includes `a208ad9`:
+  - Threat Stream `Rescanned` / `Improved` / `Worsened` badges now key off actual user-driven reanalyze markers instead of generic `context_analysis` presence
+  - treat `manual_rescan_attempt_count` or `context_analysis.re_scan_trigger in {"manual","batch"}` as the rescan truth source; do not infer re-scan just because a row has context analysis
 - `origin/main` now also includes `b771369`:
   - vLLM 16k context overflow auto-adjust now works against the current sidecar path `http://127.0.0.1:8000/v1`
   - manual `/v1/reanalyze` now auto-tags `HITL` when input had to be truncated to fit model context
@@ -50,6 +53,7 @@ Use this skill only for the current in-flight rollout continuation.
 ## What To Treat As Current
 
 - `model-api` is the service most likely still in active rollout
+- Threat Stream rows with plain `context_analysis` are not automatically re-scans; only user-driven `/v1/reanalyze` or `/v1/reanalyze/batch` results should present as `Rescanned`
 - one private-compute subnet can be healthy while the other still times out to `huggingface.co`; do not assume both AZ paths are equivalent just because one task is green
 - `scheduler` has already been redeployed with richer model-api timeout diagnostics; do not redeploy it again just to refresh model-api image changes unless scheduler-specific code changed
 - `model-api` image-only redeploys should leave scheduler/app untouched and preferably clone the known-good live task definition when you need zero-drift recovery
