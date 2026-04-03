@@ -52,6 +52,15 @@ The most common root cause is split truth across layers:
 
 If those are not unified, the same row can appear `SAFE` in one panel and `BLOCK/PRESCAN` in another.
 
+Another common failure mode is a split filter contract:
+
+- DB/read-model paging filters by stored `action`
+- workset or frontend filters by recomputed effective action
+- blocked rows survive one layer and disappear in the next
+- sparse filtered pages then trigger endless auto-fill or repeated pagination attempts
+
+Treat `blocked` as a product contract. Decide whether it means stored decision-time action or current effective action, then make every layer use the same rule.
+
 ## Canonical Fix Pattern
 
 Start by adding or using a single helper layer for current-state interpretation.
@@ -79,6 +88,8 @@ Then route every consumer through that helper layer:
 - If the current mode is work context and a mutation happens, rebuild the workset after the mutation.
 - The detail panel should derive both `PRE-SCAN ANALYSIS` and `LLM Analysis` from the same canonical current context rule as the row.
 - Badge/status/risk/detail rendering must use the same helper path.
+- Auto-fill or infinite-scroll logic must only react to rows from the active query key. When filters/time range/search change, clear stale rows or gate pagination until the first page for the new query arrives.
+- Do not send large `prompt_text` values to `conversation-context` when a stable `message_id` exists. Use `prompt_text` only as a bounded fallback.
 
 Good targets to inspect:
 
@@ -120,6 +131,9 @@ After the patch:
    - sanitized payload stops carrying `prescan_context_analysis`
    - preagg/latest compact payload stops carrying `prescan_context_analysis`
 5. verify the row no longer jumps into a stale work snapshot during single-row re-scan
+6. for live Threat Stream filters, verify both:
+   - switching to `blocked` does not create repeated canceled `query` requests
+   - selecting a blocked row does not cause repeated `conversation-context` fetches or oversized prompt query strings
 
 ## Output Contract
 
