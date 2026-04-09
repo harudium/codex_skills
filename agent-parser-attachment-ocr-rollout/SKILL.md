@@ -127,6 +127,26 @@ Useful targets:
 - whether document/image OCR deps are actually present in the running image
 - whether scheduler and app images have the same OCR runtime, not just a hotfixed container
 
+### Offline Paddle rollout contract
+
+For the AWS attachment OCR rollout, treat Paddle model preparation and Paddle serving as two different owners.
+
+- `scheduler` is responsible for bootstrap download into shared EFS cache
+- `model-api` must stay local-only and must not attempt model downloads
+- shared paths should resolve under `HF_HOME=/efs/huggingface`
+- manifest path should be `/efs/huggingface/paddle_ocr_manifest.json`
+- deploy `scheduler` before `model-api` so the cache exists first
+
+When validating this path, prove all of the following on `pgpu` or the real AWS runtime:
+
+- Paddle versions match the proven pair: `paddlepaddle==3.0.0`, `paddleocr==3.2.0`
+- local model kwargs include both `*_model_name` and `*_model_dir`
+- Paddle calls use `predict()` or `ocr(...)` without `cls=` for 3.2.x compatibility
+- text extraction reads `rec_texts` from Paddle results, not only the old nested tuple format
+- `model-api` still succeeds under `--network none` once the cache is present
+
+Do not claim offline readiness just because `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK` is set. Prove OCR succeeds with the network disabled.
+
 ## Performance Evaluation Checklist
 
 For each sample set, report:

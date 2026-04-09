@@ -44,6 +44,12 @@ Use this skill when the model-api task exists but serving is still bad.
   - legacy selection/routing path still active
 - 500 on `/v1/scan`:
   - likely vLLM sidecar or upstream serving issue
+- 500 on `/v1/decode/image` with `Unknown argument: show_log`:
+  - PaddleOCR runtime/signature drift; remove `show_log` from init kwargs
+- 500 on `/v1/decode/image` with `Model name mismatch` after switching to local model dirs:
+  - Paddle 3.2.x needs `text_detection_model_name` and `text_recognition_model_name` alongside the local dirs
+- 500 on `/v1/decode/image` with `predict() got an unexpected keyword argument cls` or similar:
+  - caller is using legacy `.ocr(..., cls=True)` path against Paddle 3.x; switch to `predict()` and parse `rec_texts`
 - 500 on `/v1/scan` with vLLM text like `You passed ... input tokens ... maximum input length ...`:
   - context overflow, not generic app failure
 - local `docker exec <model-api> curl http://127.0.0.1:8001/v1/scan` is fast but end-to-end scheduler throughput is still much worse than `pgpu`:
@@ -72,6 +78,29 @@ Use this skill when the model-api task exists but serving is still bad.
   - set `TRANSFORMERS_OFFLINE=1`
   - keep `HF_HOME` on the EFS mount
 - if you must use a local snapshot path, derive the exact path from a healthy running `vllm` container instead of transcribing an EFS identifier by hand
+
+## Paddle OCR Local-Only Guidance
+
+For attachment image OCR, the proven contract is:
+
+- `scheduler` bootstraps Paddle models into EFS-backed `HF_HOME`
+- `model-api` reads only local paths from the manifest and must fail fast if the cache is missing
+- proven runtime pair is `paddlepaddle==3.0.0` with `paddleocr==3.2.0`
+
+High-value checks:
+
+- confirm `PADDLE_OCR_MANIFEST_PATH` points at `/efs/huggingface/paddle_ocr_manifest.json`
+- confirm `MODEL_API_PADDLE_REQUIRE_LOCAL_MODELS=true`
+- if `scheduler` is expected to bootstrap models, verify the task has actual outbound egress for the first download
+- after bootstrap, verify `model-api` OCR under `--network none` or equivalent no-egress conditions before declaring success
+- expect the warning `No model hoster is available` in closed networks; do not treat that alone as failure if OCR still succeeds from local cache
+
+When proving the image decode path, use these rules:
+
+- initialize Paddle with both `*_model_name` and `*_model_dir`
+- use `predict()` as the primary call path
+- parse `rec_texts` from the result object
+- deploy order is `scheduler` first, then `model-api`
 
 ## What To Prove
 
